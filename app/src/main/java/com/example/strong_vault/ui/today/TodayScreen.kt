@@ -29,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -43,7 +44,7 @@ import com.example.strong_vault.workout.WorkoutDayState
 import com.example.strong_vault.workout.WorkoutRepository
 import com.example.strong_vault.workout.WorkoutSectionParser
 import com.example.strong_vault.workout.WorkoutSectionResult
-import com.example.strong_vault.workout.WorkoutSectionWriter
+import com.example.strong_vault.workout.model.Load
 import com.example.strong_vault.workout.model.WorkoutConfig
 import com.example.strong_vault.workout.model.WorkoutExercise
 import com.example.strong_vault.workout.model.WorkoutSection
@@ -61,6 +62,10 @@ private sealed class TodayUi {
 }
 
 private val DATE_LABEL_FORMAT = DateTimeFormatter.ofPattern("EEE, MMM d")
+
+/** How far back to scan for a previous day with a matching template name when autopopulating
+ *  starting weights/reps - generous enough to span a deload week or a missed session or two. */
+private const val TEMPLATE_HISTORY_LOOKBACK_DAYS = 120
 
 @Composable
 fun TodayScreen(
@@ -113,26 +118,33 @@ fun TodayScreen(
 
             is TodayUi.Malformed -> MalformedView(state.reason)
 
-            is TodayUi.Editable -> EditableWorkout(
-                section = state.section,
-                config = config,
-                onSectionChange = { newSection -> ui = state.copy(section = newSection) },
-                onSave = { finalSection ->
-                    scope.launch {
-                        val outcome = withContext(Dispatchers.IO) {
-                            repository.save(selectedDate, state.base, finalSection)
+            is TodayUi.Editable -> {
+                val originalSection = repository.baseSectionOf(state.base.result)
+                EditableWorkout(
+                    section = state.section,
+                    config = config,
+                    repository = repository,
+                    date = selectedDate,
+                    isDirty = state.section != originalSection,
+                    onSectionChange = { newSection -> ui = state.copy(section = newSection) },
+                    onDiscard = { ui = state.copy(section = originalSection) },
+                    onSave = { finalSection ->
+                        scope.launch {
+                            val outcome = withContext(Dispatchers.IO) {
+                                repository.save(selectedDate, state.base, finalSection)
+                            }
+                            banner = when (outcome) {
+                                SaveOutcome.Success -> "Saved"
+                                is SaveOutcome.Conflict ->
+                                    "This day's workout changed elsewhere - reloaded the latest version."
+                                is SaveOutcome.Malformed -> "Can't save: ${outcome.reason}"
+                                is SaveOutcome.IoError -> "Save failed: ${outcome.message}"
+                            }
+                            reload()
                         }
-                        banner = when (outcome) {
-                            SaveOutcome.Success -> "Saved"
-                            is SaveOutcome.Conflict ->
-                                "This day's workout changed elsewhere - reloaded the latest version."
-                            is SaveOutcome.Malformed -> "Can't save: ${outcome.reason}"
-                            is SaveOutcome.IoError -> "Save failed: ${outcome.message}"
-                        }
-                        reload()
-                    }
-                },
-            )
+                    },
+                )
+            }
         }
     }
 }
@@ -177,10 +189,15 @@ private fun MalformedView(reason: String) {
 private fun EditableWorkout(
     section: WorkoutSection,
     config: WorkoutConfig,
+    repository: WorkoutRepository,
+    date: LocalDate,
+    isDirty: Boolean,
     onSectionChange: (WorkoutSection) -> Unit,
+    onDiscard: () -> Unit,
     onSave: (WorkoutSection) -> Unit,
 ) {
     var newExerciseName by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(12.dp)) {
@@ -201,12 +218,25 @@ private fun EditableWorkout(
                     config.templates.forEach { (name, exercises) ->
                         AssistChip(
                             onClick = {
-                                val newExercises = if (section.exercises.isEmpty()) {
-                                    exercises.map { WorkoutExercise(it) }
+                                if (section.exercises.isNotEmpty()) {
+                                    onSectionChange(section.copy(day = name))
                                 } else {
-                                    section.exercises
+                                    scope.launch {
+                                        val previous = withContext(Dispatchers.IO) {
+                                            repository.recentSections(date.minusDays(1), TEMPLATE_HISTORY_LOOKBACK_DAYS)
+                                                .firstOrNull { (_, s) -> s.day.equals(name, ignoreCase = true) }
+                                                ?.second
+                                        }
+                                        val newExercises = exercises.map { exerciseName ->
+                                            val priorSets = previous?.exercises
+                                                ?.firstOrNull { it.name.equals(exerciseName, ignoreCase = true) }
+                                                ?.sets
+                                                .orEmpty()
+                                            WorkoutExercise(exerciseName, priorSets)
+                                        }
+                                        onSectionChange(section.copy(day = name, exercises = newExercises))
+                                    }
                                 }
-                                onSectionChange(section.copy(day = name, exercises = newExercises))
                             },
                             label = { Text(name) },
                         )
@@ -280,12 +310,17 @@ private fun EditableWorkout(
         }
 
         HorizontalDivider()
-        Button(
-            onClick = { onSave(section) },
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
-        ) { Text("Save to vault") }
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IconButton(onClick = onDiscard, enabled = isDirty) {
+                Text("×", style = MaterialTheme.typography.headlineSmall)
+            }
+            Button(onClick = { onSave(section) }, modifier = Modifier.weight(1f)) { Text("Save to vault") }
+        }
     }
 }
 
@@ -306,21 +341,90 @@ private fun ExerciseCard(
                 IconButton(onClick = onRemove) { Text("×", style = MaterialTheme.typography.titleLarge) }
             }
             exercise.sets.forEachIndexed { index, set ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(WorkoutSectionWriter.renderSetLine(set).removePrefix("- "))
-                    IconButton(onClick = {
-                        onExerciseChange(exercise.copy(sets = exercise.sets.filterIndexed { i, _ -> i != index }))
-                    }) { Text("×") }
+                key(index) {
+                    EditableSetRow(
+                        set = set,
+                        onChange = { updated ->
+                            onExerciseChange(
+                                exercise.copy(sets = exercise.sets.toMutableList().also { it[index] = updated }),
+                            )
+                        },
+                        onRemove = {
+                            onExerciseChange(exercise.copy(sets = exercise.sets.filterIndexed { i, _ -> i != index }))
+                        },
+                    )
                 }
             }
             AddSetRow(onAdd = { set -> onExerciseChange(exercise.copy(sets = exercise.sets + set)) })
         }
     }
 }
+
+/** Same BW/Weight/Reps/RPE fields as [AddSetRow], pre-filled from [set] and committing an edit
+ *  back through [onChange] on every keystroke that still parses. An unparseable in-progress edit
+ *  (e.g. a blank Reps field mid-retype) is left uncommitted rather than reverting [set] - the
+ *  field just keeps whatever the user typed until it parses again. Any existing free-text note is
+ *  preserved verbatim since these fields have no note input of their own. */
+@Composable
+private fun EditableSetRow(set: WorkoutSet, onChange: (WorkoutSet) -> Unit, onRemove: () -> Unit) {
+    var isBodyweight by remember(set) { mutableStateOf(set.load is Load.Bodyweight) }
+    var weightText by remember(set) { mutableStateOf(setFieldWeightText(set.load)) }
+    var repsText by remember(set) { mutableStateOf(set.reps.toString()) }
+    var rpeText by remember(set) { mutableStateOf(set.rpe?.let(::setFieldNumberText) ?: "") }
+
+    fun commit() {
+        val loadToken = when {
+            isBodyweight && weightText.isBlank() -> "BW"
+            isBodyweight && weightText.startsWith("-") -> "BW$weightText"
+            isBodyweight -> "BW+${weightText.removePrefix("+")}"
+            else -> weightText
+        }
+        val rpeSuffix = rpeText.takeIf { it.isNotBlank() }?.let { "@$it" } ?: ""
+        val noteSuffix = set.note?.let { " $it" } ?: ""
+        WorkoutSectionParser.parseSetLine("- ${loadToken}x${repsText}$rpeSuffix$noteSuffix")?.let(onChange)
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FilterChip(
+            selected = isBodyweight,
+            onClick = { isBodyweight = !isBodyweight; commit() },
+            label = { Text("BW") },
+        )
+        OutlinedTextField(
+            value = weightText,
+            onValueChange = { weightText = it; commit() },
+            label = { Text(if (isBodyweight) "+/-" else "Weight") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.width(90.dp),
+        )
+        OutlinedTextField(
+            value = repsText,
+            onValueChange = { repsText = it; commit() },
+            label = { Text("Reps") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.width(70.dp),
+        )
+        OutlinedTextField(
+            value = rpeText,
+            onValueChange = { rpeText = it; commit() },
+            label = { Text("RPE") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.width(70.dp),
+        )
+        IconButton(onClick = onRemove) { Text("×") }
+    }
+}
+
+private fun setFieldWeightText(load: Load): String = when (load) {
+    is Load.Absolute -> setFieldNumberText(load.weight)
+    is Load.Bodyweight -> if (load.delta == 0.0) "" else setFieldNumberText(load.delta)
+}
+
+private fun setFieldNumberText(value: Double): String =
+    if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
 
 @Composable
 private fun AddSetRow(onAdd: (WorkoutSet) -> Unit) {
