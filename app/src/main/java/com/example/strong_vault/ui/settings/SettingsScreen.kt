@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.strong_vault.vault.VaultSettings
 import com.example.strong_vault.vault.WeightUnit
@@ -28,6 +29,10 @@ fun SettingsScreen(
 ) {
     var vaultPath by remember(settings) { mutableStateOf(settings.vaultPath) }
     var weightUnit by remember(settings) { mutableStateOf(settings.weightUnit) }
+    val context = LocalContext.current
+    val versionName = remember {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+    }
 
     Column(
         modifier = modifier
@@ -62,5 +67,10 @@ fun SettingsScreen(
         Button(onClick = { onSettingsChanged(VaultSettings(vaultPath, weightUnit)) }) {
             Text("Save")
         }
+
+        Text(
+            "Version $versionName",
+            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+        )
     }
 }

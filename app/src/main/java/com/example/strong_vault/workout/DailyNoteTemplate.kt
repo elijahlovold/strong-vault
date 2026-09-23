@@ -16,11 +16,10 @@ object DailyNoteTemplate {
         append("\n")
         append("# Agenda\n")
         append("\n")
+        append("# Scratchpad\n")
+        append("\n")
         append("# Workout\n")
         append("\n")
         append("$WORKOUT_END_DELIMITER\n")
-        append("\n")
-        append("# Scratchpad\n")
-        append("\n")
     }
 }

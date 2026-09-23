@@ -5,9 +5,6 @@ import com.example.strong_vault.workout.model.WorkoutExercise
 import com.example.strong_vault.workout.model.WorkoutSection
 import com.example.strong_vault.workout.model.WorkoutSet
 
-private const val AGENDA_HEADING = "# Agenda"
-private const val SCRATCHPAD_HEADING = "# Scratchpad"
-
 object WorkoutSectionWriter {
 
     /**
@@ -29,40 +26,16 @@ object WorkoutSectionWriter {
                 return (before + newBlock + after).joinToString("\n")
             }
             WorkoutSectionResult.Absent -> {
-                val insertAt = insertionIndex(lines)
-                val before = lines.subList(0, insertAt)
-                val after = lines.subList(insertAt, lines.size)
+                val before = lines
                 val spacedBlock = if (before.isNotEmpty() && before.last().isNotBlank()) {
                     listOf("") + newBlock
                 } else {
                     newBlock
                 }
-                val spacedAfter = if (after.isNotEmpty() && after.first().isNotBlank()) {
-                    listOf("") + after
-                } else {
-                    after
-                }
-                return (before + spacedBlock + spacedAfter).joinToString("\n")
+                return (before + spacedBlock).joinToString("\n")
             }
             is WorkoutSectionResult.Malformed -> error("unreachable")
         }
-    }
-
-    private fun insertionIndex(lines: List<String>): Int {
-        val agendaIndex = lines.indexOfFirst { it.trimEnd('\r') == AGENDA_HEADING }
-        if (agendaIndex != -1) {
-            var i = agendaIndex + 1
-            while (i < lines.size && !isTopLevelHeading(lines[i])) i++
-            return i
-        }
-        val scratchpadIndex = lines.indexOfFirst { it.trimEnd('\r') == SCRATCHPAD_HEADING }
-        if (scratchpadIndex != -1) return scratchpadIndex
-        return lines.size
-    }
-
-    private fun isTopLevelHeading(line: String): Boolean {
-        val trimmed = line.trimEnd('\r')
-        return trimmed.startsWith("# ") || trimmed == "#"
     }
 
     private fun renderBlock(section: WorkoutSection): List<String> {

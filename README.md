@@ -11,7 +11,7 @@
 
 ## Why
 
-`androidhomecal`, a companion widget, already opens your daily notes from the home
+[androidhomecal](https://github.com/elijahlovold/android-obsidian-cal-widget), a companion widget, already opens your daily notes from the home
 screen. Strong Vault extends the same idea to workouts: log sets during a lifting
 session and they land directly in that day's note, in a plain-text format you can
 read, grep, and hand-edit in `nvim` like everything else in the vault.
@@ -33,8 +33,8 @@ read, grep, and hand-edit in `nvim` like everything else in the vault.
 
 ### Daily note: `# Workout` section
 
-The app adds a `# Workout` section to each day's note, between `# Agenda` and
-`# Scratchpad`:
+The app adds a `# Workout` section to the end of each day's note, after any
+existing sections like `# Agenda` and `# Scratchpad`:
 
 ```markdown
 # Workout

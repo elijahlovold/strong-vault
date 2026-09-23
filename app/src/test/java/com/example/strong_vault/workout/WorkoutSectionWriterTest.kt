@@ -36,7 +36,7 @@ class WorkoutSectionWriterTest {
     }
 
     @Test
-    fun `inserts a fresh section between Agenda and Scratchpad when absent`() {
+    fun `appends a fresh section after Agenda and Scratchpad when absent`() {
         val note = "# Agenda\n\n- stuff\n\n# Scratchpad\n\n- notes\n"
         val result = WorkoutSectionParser.parse(note)
         assertEquals(WorkoutSectionResult.Absent, result)
@@ -57,8 +57,8 @@ class WorkoutSectionWriterTest {
         val agendaIdx = written.indexOf("# Agenda")
         val workoutIdx = written.indexOf("# Workout")
         val scratchpadIdx = written.indexOf("# Scratchpad")
-        assertTrue(agendaIdx < workoutIdx)
-        assertTrue(workoutIdx < scratchpadIdx)
+        assertTrue(agendaIdx < scratchpadIdx)
+        assertTrue(scratchpadIdx < workoutIdx)
 
         val reparsed = WorkoutSectionParser.parse(written)
         assertTrue(reparsed is WorkoutSectionResult.Parsed)
